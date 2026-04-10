@@ -13,6 +13,16 @@ impl Suit {
     pub fn suits() -> Vec<Suit> {
         vec![Suit::Spades, Suit::Clubs, Suit::Diamonds, Suit::Hearts]
     }
+
+    pub fn from_char(c: char) -> Option<Suit> {
+        match c {
+            'S' | 's' => Some(Suit::Spades),
+            'C' | 'c' => Some(Suit::Clubs),
+            'D' | 'd' => Some(Suit::Diamonds),
+            'H' | 'h' => Some(Suit::Spades),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -43,6 +53,22 @@ impl Value {
             Value::Queen,
             Value::King,
         ]
+    }
+
+    pub fn from_char(c: char) -> Option<Value> {
+        match c {
+            '1' => Some(Value::One),
+            '2' => Some(Value::Two),
+            '3' => Some(Value::Three),
+            '4' => Some(Value::Four),
+            '5' => Some(Value::Five),
+            '6' => Some(Value::Six),
+            '7' => Some(Value::Seven),
+            'J' | 'j' => Some(Value::Jack),
+            'Q' | 'q' => Some(Value::Queen),
+            'K' | 'k' => Some(Value::King),
+            _ => None,
+        }
     }
 }
 
@@ -174,13 +200,38 @@ fn get_input() -> Option<Move> {
     let mut m: Option<Move> = None;
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
-        m = match line.unwrap() {
-            _ => None,
-        };
-        // parse the move in the format
+        let l = line.unwrap();
+        let mut iter = l.split_whitespace();
+        let mut down = false;
+        match iter.next() {
+            Some("u") | Some("U") => down = true,
+            Some("d") | Some("D") => down = false,
+            _ => return None,
+        }
+        // down is just (value, suit); up is a list of (value, suits)
+        if down {
+            let c = match iter.next() {
+                Some(b) => {
+                    // TODO(tommy): parse
+                    Card::new(Suit::Spades, Value::Six)
+                }
+                _ => return None,
+            };
+            return Some(Move::Down(c));
+        } else {
+            let v = vec![];
+            for i in iter {
+                // TODO(tommy): parse and push
+                // v.push();
+                println!("{:?}", i);
+            }
+            if v.len() == 0 {
+                return None;
+            }
+            return Some(Move::Up(v));
+        }
     }
-
-    todo!();
+    return m;
 }
 
 fn main() {
