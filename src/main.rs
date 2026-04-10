@@ -1,5 +1,5 @@
 pub enum Suit {
-    Swords,
+    Spades,
     Clubs,
     Diamonds,
     Hearts,
