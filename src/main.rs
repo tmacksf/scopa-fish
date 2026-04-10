@@ -1,8 +1,8 @@
 pub enum Suit {
-    S,
-    C,
-    D,
-    H,
+    Swords,
+    Clubs,
+    Diamonds,
+    Hearts,
 }
 
 pub enum Val {
@@ -13,9 +13,9 @@ pub enum Val {
     Five,
     Six,
     Seven,
-    J,
-    Q,
-    K,
+    Jack,
+    Queen,
+    King,
 }
 
 pub enum Card {
