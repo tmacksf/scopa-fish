@@ -1,4 +1,5 @@
-// use std::io;
+use std::io;
+use std::io::prelude::*;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Suit {
@@ -92,6 +93,7 @@ pub struct Game {
     table: Vec<Card>,
     deck: Vec<Card>,
     turn: usize,
+    moves: Vec<Move>,
 }
 
 impl Game {
@@ -101,6 +103,7 @@ impl Game {
             deck: Vec::new(),
             table: Vec::new(),
             turn: 0,
+            moves: Vec::new(),
         };
         g.new_deck();
         return g;
@@ -162,6 +165,24 @@ impl Game {
     }
 }
 
+enum Move {
+    Down(Card),
+    Up(Vec<Card>),
+}
+
+fn get_input() -> Option<Move> {
+    let mut m: Option<Move> = None;
+    let stdin = io::stdin();
+    for line in stdin.lock().lines() {
+        m = match line.unwrap() {
+            _ => None,
+        };
+        // parse the move in the format
+    }
+
+    todo!();
+}
+
 fn main() {
     // create a game
     let mut game = Game::new();
@@ -171,6 +192,7 @@ fn main() {
     game.debug_state();
 
     loop {
+        get_input();
         break;
     }
 
