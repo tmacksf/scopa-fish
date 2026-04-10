@@ -2,7 +2,7 @@ pub enum Suit {
     S,
     C,
     D,
-    B,
+    H,
 }
 
 pub enum Val {
