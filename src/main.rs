@@ -1,4 +1,3 @@
-use rand::prelude::*;
 // use std::io;
 
 #[derive(Copy, Clone, Debug)]
@@ -64,35 +63,52 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn split_the_deck(cards: Vec<Card>) {
-        todo!();
+    pub fn new() -> Player {
+        Player {
+            hand: Vec::new(),
+            pond: Vec::new(),
+        }
     }
 }
 
 pub struct Game {
     players: Vec<Player>,
+    deck: Vec<Card>,
 }
 
-fn new_deck() -> Vec<Card> {
-    let vals = Val::vals();
-    let suits = Suit::suits();
-    let mut deck = vec![];
-    for v in vals {
-        for s in &suits {
-            deck.push(Card::new(*s, v));
-        }
+impl Game {
+    pub fn new() -> Game {
+        let mut g = Game {
+            players: vec![Player::new(), Player::new()], // TODO(tommy): Add more player option
+            deck: Vec::new(),
+        };
+        g.new_deck();
+        return g;
     }
-    deck
+
+    fn new_deck(&mut self) {
+        let vals = Val::vals();
+        let suits = Suit::suits();
+        let mut deck = vec![];
+        for v in vals {
+            for s in &suits {
+                deck.push(Card::new(*s, v));
+            }
+        }
+        self.deck = deck;
+    }
+
+    pub fn shuffle(&mut self) {
+        todo!("Theo");
+    }
 }
 
 fn main() {
-    let mut rng = rand::rng();
-    // create a deck
-    let mut deck = new_deck();
-    deck.shuffle(&mut rng);
-
-    for i in 0..deck.len() {
-        print!("{:?}, ", deck[i]);
+    // create a game
+    let mut game = Game::new();
+    game.shuffle();
+    for i in 0..game.deck.len() {
+        print!("{:?}, ", game.deck[i]);
     }
     println!();
 
