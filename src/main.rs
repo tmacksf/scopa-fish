@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io;
 use std::io::prelude::*;
 
@@ -97,6 +98,13 @@ impl Card {
     }
 }
 
+impl fmt::Display for Card {
+    // Required method
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        write!(f, "({:?}, {:?})", self.val, self.suit)
+    }
+}
+
 pub struct Player {
     hand: Vec<Card>,
     pond: Vec<Card>,
@@ -123,7 +131,7 @@ impl Player {
     pub fn debug_print(&self) {
         println!("Hand: {:?}", self.hand);
         println!("Pond: {:?}", self.pond);
-        println!("Score: {:?}", self.score);
+        println!("Score: {}", self.score);
     }
 }
 
@@ -192,15 +200,16 @@ impl Game {
         let _ = self
             .table
             .iter()
-            .map(|c| println!("{:?}", c))
+            .map(|c| println!("{}", c))
             .collect::<Vec<()>>();
         println!("\nDeck: ");
         let _ = self
             .deck
             .iter()
-            .map(|c| println!("{:?}", c))
+            .map(|c| println!("{}", c))
             .collect::<Vec<()>>();
         println!("\nTurn: {}", self.turn);
+        println!("\nMoves: {:?}", self.moves);
     }
 }
 
