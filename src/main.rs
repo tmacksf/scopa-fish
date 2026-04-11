@@ -1,6 +1,10 @@
 use std::io;
 use std::io::prelude::*;
 
+// TODOS:
+// Proper error handling
+//
+
 #[derive(Copy, Clone, Debug)]
 pub enum Suit {
     Spades,
@@ -14,13 +18,13 @@ impl Suit {
         vec![Suit::Spades, Suit::Clubs, Suit::Diamonds, Suit::Hearts]
     }
 
-    pub fn from_char(c: char) -> Option<Suit> {
+    pub fn from_char(c: char) -> Result<Suit, String> {
         match c {
-            'S' | 's' => Some(Suit::Spades),
-            'C' | 'c' => Some(Suit::Clubs),
-            'D' | 'd' => Some(Suit::Diamonds),
-            'H' | 'h' => Some(Suit::Spades),
-            _ => None,
+            'S' | 's' => Ok(Suit::Spades),
+            'C' | 'c' => Ok(Suit::Clubs),
+            'D' | 'd' => Ok(Suit::Diamonds),
+            'H' | 'h' => Ok(Suit::Hearts),
+            _ => Err(format!("Coult not convert '{}' to suit", c)),
         }
     }
 }
@@ -55,19 +59,19 @@ impl Value {
         ]
     }
 
-    pub fn from_char(c: char) -> Option<Value> {
+    pub fn from_char(c: char) -> Result<Value, String> {
         match c {
-            '1' => Some(Value::One),
-            '2' => Some(Value::Two),
-            '3' => Some(Value::Three),
-            '4' => Some(Value::Four),
-            '5' => Some(Value::Five),
-            '6' => Some(Value::Six),
-            '7' => Some(Value::Seven),
-            'J' | 'j' => Some(Value::Jack),
-            'Q' | 'q' => Some(Value::Queen),
-            'K' | 'k' => Some(Value::King),
-            _ => None,
+            '1' => Ok(Value::One),
+            '2' => Ok(Value::Two),
+            '3' => Ok(Value::Three),
+            '4' => Ok(Value::Four),
+            '5' => Ok(Value::Five),
+            '6' => Ok(Value::Six),
+            '7' => Ok(Value::Seven),
+            'J' | 'j' => Ok(Value::Jack),
+            'Q' | 'q' => Ok(Value::Queen),
+            'K' | 'k' => Ok(Value::King),
+            _ => Err(format!("Could not convert '{}' to a value", c)),
         }
     }
 }
@@ -81,6 +85,15 @@ pub struct Card {
 impl Card {
     pub fn new(suit: Suit, val: Value) -> Card {
         Card { suit, val }
+    }
+
+    pub fn parse(s: &str) -> Result<Card, String> {
+        if s.len() != 2 {
+            return Err(format!("string must be of length two: {}", s));
+        }
+        let v = Value::from_char(s.chars().nth(0).unwrap())?;
+        let s = Suit::from_char(s.chars().nth(1).unwrap())?;
+        Ok(Card::new(s, v))
     }
 }
 
@@ -191,47 +204,45 @@ impl Game {
     }
 }
 
+#[derive(Clone, Debug)]
 enum Move {
     Down(Card),
     Up(Vec<Card>),
 }
 
-fn get_input() -> Option<Move> {
-    let mut m: Option<Move> = None;
+fn get_input() -> Result<Move, String> {
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let l = line.unwrap();
         let mut iter = l.split_whitespace();
-        let mut down = false;
-        match iter.next() {
-            Some("u") | Some("U") => down = true,
-            Some("d") | Some("D") => down = false,
-            _ => return None,
-        }
+        let down = match iter.next() {
+            Some("u") | Some("U") => false,
+            Some("d") | Some("D") => true,
+            _ => return Err(format!("Needs to start with u/U or d/D")),
+        };
         // down is just (value, suit); up is a list of (value, suits)
         if down {
             let c = match iter.next() {
-                Some(b) => {
-                    // TODO(tommy): parse
-                    Card::new(Suit::Spades, Value::Six)
-                }
-                _ => return None,
+                Some(b) => Card::parse(b)?,
+                _ => return Err(format!("Need a second argument for down")),
             };
-            return Some(Move::Down(c));
+            // TODO(tommy): Confirm it is the only card being played
+            return Ok(Move::Down(c));
         } else {
-            let v = vec![];
+            // TODO(tommy): Probably nicer to convert to some sort of map
+            // let v: Vec<Card> = iter.map(|s: &str| { return Card::parse(s); }).collect();
+            let mut v = vec![];
             for i in iter {
-                // TODO(tommy): parse and push
-                // v.push();
-                println!("{:?}", i);
+                let c = Card::parse(i)?;
+                v.push(c);
             }
             if v.len() == 0 {
-                return None;
+                return Err(format!("No arguments for pick up"));
             }
-            return Some(Move::Up(v));
+            return Ok(Move::Up(v));
         }
     }
-    return m;
+    return Err(format!("Could not parse input"));
 }
 
 fn main() {
@@ -243,9 +254,13 @@ fn main() {
     game.debug_state();
 
     loop {
-        get_input();
-        break;
+        let res = match get_input() {
+            Ok(c) => c,
+            Err(e) => {
+                println!("Err: {}", e);
+                continue;
+            }
+        };
+        println!("{:?}", res);
     }
-
-    println!("Hello, world!");
 }
