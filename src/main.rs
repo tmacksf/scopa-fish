@@ -4,8 +4,12 @@ use std::io;
 use std::io::prelude::*;
 
 // TODOS:
-// Proper error handling
-//
+// Proper error handling (replace strings in Result with errors) - Tommy
+// Randomness (shuffling) - Theo
+// Move validity and multiple moves - Alex
+// Scopa detection
+// Game over detection
+// Scoring
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Suit {
@@ -80,8 +84,8 @@ impl Value {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Card {
-    suit: Suit,
     val: Value,
+    suit: Suit,
 }
 
 impl Card {
@@ -93,6 +97,7 @@ impl Card {
         if s.len() != 2 {
             return Err(format!("string must be of length two: {}", s));
         }
+        // already know that len is 2 so unwrap is fine
         let v = Value::from_char(s.chars().nth(0).unwrap())?;
         let s = Suit::from_char(s.chars().nth(1).unwrap())?;
         Ok(Card::new(s, v))
@@ -100,7 +105,6 @@ impl Card {
 }
 
 impl fmt::Display for Card {
-    // Required method
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         write!(f, "({:?}, {:?})", self.val, self.suit)
     }
@@ -173,16 +177,12 @@ impl Game {
     }
 
     fn new_deck(&mut self) {
-        let vals = Value::vals();
         let suits = Suit::suits();
-        let mut deck = Vec::new();
-        for v in 0..vals.len() {
-            for s in 0..suits.len() {
-                let card = Card::new(suits[s], vals[v]);
-                deck.push(card);
+        for v in Value::vals().iter() {
+            for s in &suits {
+                self.deck.push(Card::new(*s, *v));
             }
         }
-        self.deck = deck;
     }
 
     pub fn init_table(&mut self) {
@@ -323,6 +323,7 @@ fn get_input() -> Result<Move, String> {
 
 fn main() {
     // create a game
+    // TODO: Might have to change this to round and make game first to 11
     let mut game = Game::new();
     game.shuffle();
     game.init_table();
