@@ -7,9 +7,9 @@ use std::io::prelude::*;
 // Proper error handling (replace strings in Result with errors) - Tommy
 // Randomness (shuffling) - Theo
 // Move validity and multiple moves - Alex
-// Scopa detection
-// Game over detection
-// Scoring
+// Scopa detection - Alex?
+// Game over detection - Tommy but need alex to do move stuff
+// Scoring - Tommy
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Suit {
@@ -153,6 +153,46 @@ impl Player {
             false => panic!("Card not present in players hand: {}", c),
         };
     }
+
+    pub fn find_card(&self, v: Option<Value>, s: Option<Suit>) -> usize {
+        let mut count = 0;
+
+        for i in 0..self.pond.len() {
+            let v_match = match v {
+                Some(v) => self.pond[i].val == v,
+                None => true,
+            };
+            let s_match = match s {
+                Some(s) => self.pond[i].suit == s,
+                None => true,
+            };
+            if v_match && s_match {
+                count += 1;
+            }
+        }
+
+        return count;
+    }
+
+    // Calculate score is only for two and four people
+    // TODO(Tommy): adapt a 3 person calculate score
+    pub fn calculate_score(&mut self) {
+        // check if the player has card majority
+        if self.pond.len() > 20 {
+            self.score += 1;
+        }
+        // check if the player has diamond majority
+        if self.find_card(None, Some(Suit::Diamonds)) > 5 {
+            self.score += 1;
+        }
+        // see if there is a 7 of diamonds
+        if self.find_card(Some(Value::Seven), Some(Suit::Diamonds)) > 0 {
+            self.score += 1;
+        }
+
+        // see if there are majority sevens, sixes, fives, fours, threes, twos, aces..
+        // TODO: Tommy
+    }
 }
 
 pub struct Game {
@@ -207,7 +247,7 @@ impl Game {
     pub fn play_card(&mut self, card: Card) {
         match self.table.insert(card) {
             true => {}
-            false => panic!("Could not put card on table"),
+            false => panic!("Could not put card ({}) on table", card),
         }
     }
 
@@ -278,12 +318,23 @@ impl Game {
         }
         empty
     }
+
+    pub fn calculate_scores(&mut self) {
+        for i in 0..self.players.len() {
+            self.players[i].calculate_score();
+        }
+    }
+
+    pub fn over(&self) -> bool {
+        return false;
+    }
 }
 
 #[derive(Clone, Debug)]
 pub enum Move {
     Down(Card),
     Up(Vec<Card>),
+    // DownUp(Card, Vec<Card>), // Maybe this is better?
 }
 
 fn get_input() -> Result<Move, String> {
@@ -333,8 +384,12 @@ fn main() {
     loop {
         game.debug_state(false);
         // TODO: End the game
+        if game.over() {
+            break;
+        }
         if game.all_hands_empty() {
             game.deal_users();
+            continue; // to show cards
         }
 
         let mv = match get_input() {
@@ -363,4 +418,5 @@ fn main() {
         // after everything is done, switch to the other player's turn and continue
         game.next_turn();
     }
+    // score tally
 }
