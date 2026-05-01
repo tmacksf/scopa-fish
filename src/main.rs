@@ -1,17 +1,23 @@
+use rand::prelude::*;
+use rand::rng;
 use std::collections::HashSet;
 use std::fmt;
 use std::io;
 use std::io::prelude::*;
+use std::ops::Add;
+
+// use rustc_hash::FxHashSet;
+// Could move to this because the hashes are tiny
+// could also build our own hashset (just a vector of len 40 (80 bytes for cards))
+// Cargo.toml: rustc-hash = "1.1"
 
 // TODOS:
 // Proper error handling (replace strings in Result with errors) - Tommy
 // Randomness (shuffling) - Theo
-// Move validity and multiple moves - Alex
-// Scopa detection - Alex?
-// Game over detection - Tommy but need alex to do move stuff
+// Checking if moves take the least amount of cards - Alex
 // Scoring - Tommy
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Suit {
     Spades,
     Clubs,
@@ -33,20 +39,29 @@ impl Suit {
             _ => Err(format!("Coult not convert '{}' to suit", c)),
         }
     }
+
+    pub fn bitmask(&self) -> u8 {
+        match self {
+            Suit::Spades => 0b00000000,
+            Suit::Clubs => 0b00000001,
+            Suit::Diamonds => 0b00000010,
+            Suit::Hearts => 0b00000011,
+        }
+    }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Value {
-    One,
-    Two,
-    Three,
-    Four,
-    Five,
-    Six,
-    Seven,
-    Jack,
-    Queen,
-    King,
+    One = 1,
+    Two = 2,
+    Three = 3,
+    Four = 4,
+    Five = 5,
+    Six = 6,
+    Seven = 7,
+    Jack = 8,
+    Queen = 9,
+    King = 10,
 }
 
 impl Value {
@@ -67,7 +82,7 @@ impl Value {
 
     pub fn from_char(c: char) -> Result<Value, String> {
         match c {
-            '1' => Ok(Value::One),
+            '1' | 'a' | 'A' => Ok(Value::One),
             '2' => Ok(Value::Two),
             '3' => Ok(Value::Three),
             '4' => Ok(Value::Four),
@@ -80,17 +95,55 @@ impl Value {
             _ => Err(format!("Could not convert '{}' to a value", c)),
         }
     }
+
+    pub fn bitmask(&self) -> u8 {
+        match self {
+            Value::One => 0b00000000,
+            Value::Two => 0b00000100,
+            Value::Three => 0b00001000,
+            Value::Four => 0b00001100,
+            Value::Five => 0b00010000,
+            Value::Six => 0b00010100,
+            Value::Seven => 0b00011000,
+            Value::Jack => 0b00011100,
+            Value::Queen => 0b00100000,
+            Value::King => 0b00100100,
+        }
+    }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+impl Add for Value {
+    type Output = Option<Self>;
+
+    fn add(self, other: Self) -> Option<Self> {
+        let res = (self as u8) + (other as u8);
+        match res {
+            1 => Some(Value::One),
+            2 => Some(Value::Two),
+            3 => Some(Value::Three),
+            4 => Some(Value::Four),
+            5 => Some(Value::Five),
+            6 => Some(Value::Six),
+            7 => Some(Value::Seven),
+            8 => Some(Value::Jack),
+            9 => Some(Value::Queen),
+            10 => Some(Value::King),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Card {
     val: Value,
     suit: Suit,
 }
 
+// Every card can be stored in 6 bits meaning a full 40 card deck needs
+// 6*40 bits -> 240 bits or 3 bytes
 impl Card {
-    pub fn new(suit: Suit, val: Value) -> Card {
-        Card { suit, val }
+    pub fn new(val: Value, suit: Suit) -> Card {
+        Card { val, suit }
     }
 
     pub fn parse(s: &str) -> Result<Card, String> {
@@ -100,7 +153,11 @@ impl Card {
         // already know that len is 2 so unwrap is fine
         let v = Value::from_char(s.chars().nth(0).unwrap())?;
         let s = Suit::from_char(s.chars().nth(1).unwrap())?;
-        Ok(Card::new(s, v))
+        Ok(Card::new(v, s))
+    }
+
+    fn _bitmask(&self) -> u8 {
+        self.val.bitmask() | self.suit.bitmask()
     }
 }
 
@@ -201,6 +258,7 @@ pub struct Game {
     table: HashSet<Card>,
     deck: Vec<Card>,
     moves: Vec<Move>,
+    ace_sweeps: bool,
 }
 
 impl Game {
@@ -211,6 +269,7 @@ impl Game {
             table: HashSet::new(),
             turn: 0,
             moves: Vec::new(),
+            ace_sweeps: true,
         };
         g.new_deck();
         return g;
@@ -220,7 +279,7 @@ impl Game {
         let suits = Suit::suits();
         for v in Value::vals().iter() {
             for s in &suits {
-                self.deck.push(Card::new(*s, *v));
+                self.deck.push(Card::new(*v, *s));
             }
         }
     }
@@ -241,7 +300,7 @@ impl Game {
     }
 
     pub fn next_turn(&mut self) {
-        self.turn = (self.turn + 1) % 2
+        self.turn = (self.turn + 1) % self.players.len()
     }
 
     pub fn play_card(&mut self, card: Card) {
@@ -259,7 +318,8 @@ impl Game {
     }
 
     pub fn shuffle(&mut self) {
-        // todo!("Theo");
+        let mut rng = rng();
+        self.deck.shuffle(&mut rng);
     }
 
     pub fn debug_state(&self, all_data: bool) {
@@ -298,8 +358,11 @@ impl Game {
                 self.players[p].remove_card(m);
                 self.play_card(*m);
             }
-            Move::Up(m) => {
-                for c in m.iter() {
+            Move::Up(m, cards) => {
+                self.players[p].remove_card(m);
+                self.players[p].give_pond(*m);
+
+                for c in cards.iter() {
                     self.take_card(c);
                     self.players[p].give_pond(*c);
                 }
@@ -309,6 +372,18 @@ impl Game {
 
     pub fn push_move(&mut self, mv: &Move) {
         self.moves.push(mv.clone());
+    }
+
+    pub fn check_scopa(&mut self, mv: &Move) {
+        match mv {
+            Move::Down(_) => {}
+            Move::Up(c, _) => {
+                if c.val != Value::One {
+                    let t = self.turn;
+                    self.players[t].score += 1;
+                }
+            }
+        }
     }
 
     pub fn all_hands_empty(&self) -> bool {
@@ -325,16 +400,97 @@ impl Game {
         }
     }
 
+    fn recursive_move_helper(
+        &self,
+        index: usize,
+        target: Card,
+        table: &Vec<Card>,
+        moves: &mut Vec<Move>,
+        total: usize,
+        current_cards: &mut Vec<Card>,
+    ) {
+        if index >= table.len() {
+            return;
+        }
+        let target_value = target.val as usize;
+        let new_total = total + table[index].val as usize;
+        if new_total > target_value {
+            return;
+        }
+        current_cards.push(table[index]);
+        if target_value == new_total {
+            moves.push(Move::Up(target, current_cards.clone()));
+        }
+        self.recursive_move_helper(index + 1, target, table, moves, new_total, current_cards);
+        current_cards.pop();
+        self.recursive_move_helper(index + 1, target, table, moves, total, current_cards);
+    }
+
+    pub fn generate_moves(&self) -> Vec<Move> {
+        let mut table_cards: Vec<Card> = self.table.iter().map(|&c| return c).collect();
+        table_cards.sort();
+        let mut moves = Vec::new();
+
+        for card in self.players[self.turn].hand.iter() {
+            if self.ace_sweeps && card.val == Value::One {
+                moves.push(Move::Up(*card, table_cards.clone()));
+                continue;
+            }
+            // if no cards on the table then only down is possible
+            if self.table.len() == 0 {
+                moves.push(Move::Down(*card));
+                continue;
+            }
+
+            // find if a pickup is possible
+            let mut mvs = Vec::new();
+            let mut current_cards = vec![];
+            self.recursive_move_helper(0, *card, &table_cards, &mut mvs, 0, &mut current_cards);
+            if mvs.len() > 0 {
+                moves.append(&mut mvs);
+                continue;
+            }
+
+            // if no pickup is possible
+            moves.push(Move::Down(*card));
+        }
+
+        return moves;
+    }
+
     pub fn over(&self) -> bool {
-        return false;
+        let mut over = true;
+        for i in 0..self.players.len() {
+            over &= self.players[i].hand.len() == 0;
+        }
+        return over && self.deck.len() == 0;
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum Move {
     Down(Card),
-    Up(Vec<Card>),
-    // DownUp(Card, Vec<Card>), // Maybe this is better?
+    Up(Card, Vec<Card>),
+}
+
+impl Move {
+    fn equal(&self, m: &Self) -> bool {
+        // TODO: This is so slow so need to optimise
+        match (self, m) {
+            (Move::Down(c1), Move::Down(c2)) => c1 == c2,
+            (Move::Up(c1, cds1), Move::Up(c2, cds2)) => {
+                if c1 != c2 {
+                    return false;
+                }
+                let mut cds1_ = cds1.clone();
+                let mut cds2_ = cds2.clone();
+                cds1_.sort();
+                cds2_.sort();
+                cds1 == cds2
+            }
+            (_, _) => false,
+        }
+    }
 }
 
 fn get_input() -> Result<Move, String> {
@@ -361,12 +517,18 @@ fn get_input() -> Result<Move, String> {
             //     return Err(format!("Too many arguments {}", c2));
             // }
         } else {
+            let c = match iter.next() {
+                Some(b) => Card::parse(b)?,
+                _ => return Err(format!("Need a first argument for up")),
+            };
             let mut v = vec![];
             for i in iter {
-                let c = Card::parse(i)?;
-                v.push(c);
+                // could have a wildcard for all ?
+                let card = Card::parse(i)?;
+                v.push(card);
             }
-            return Ok(Move::Up(v));
+            v.sort();
+            return Ok(Move::Up(c, v));
         }
     }
     return Err(format!("Could not parse input"));
@@ -379,11 +541,9 @@ fn main() {
     game.shuffle();
     game.init_table();
     game.deal_users();
-    game.debug_state(true);
 
     loop {
         game.debug_state(false);
-        // TODO: End the game
         if game.over() {
             break;
         }
@@ -399,24 +559,68 @@ fn main() {
                 continue;
             }
         };
-
-        // maybe can have something here that checks if a move is valid and resturns an enum for
-        // the followup. Could be Invalid, Continue, PickupRequired or something like that.
-        // For invalid: just continue and get user input again (nothing has happened to the game)
-        // For Continue: do the move and next turn
-        // For PickupRequired: do the move and enter a new loop where the user has to do a second
-        // valid pickup move. Once that is done then break out of the second loop and continue the
-        // game
-        if !game.valid_move(&mv) {
+        let mvs = game.generate_moves();
+        let mut valid_move = false;
+        for i in mvs {
+            if mv.equal(&i) {
+                valid_move = true;
+                break;
+            }
+        }
+        if !valid_move {
             println!("Invalid move: {:?}", mv);
             continue;
         }
 
         game.do_move(&mv);
         game.push_move(&mv);
+        game.check_scopa(&mv);
 
         // after everything is done, switch to the other player's turn and continue
         game.next_turn();
     }
     // score tally
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Card;
+    use crate::Game;
+    use crate::Suit;
+    use crate::Value;
+
+    #[test]
+    fn test_move_gen() {
+        let mut game = Game::new();
+        game.table.insert(Card::new(Value::Five, Suit::Clubs));
+        game.table.insert(Card::new(Value::Five, Suit::Spades));
+        game.table.insert(Card::new(Value::King, Suit::Spades));
+        game.table.insert(Card::new(Value::Seven, Suit::Spades));
+
+        game.players[0]
+            .hand
+            .insert(Card::new(Value::King, Suit::Diamonds));
+        game.players[0]
+            .hand
+            .insert(Card::new(Value::Five, Suit::Diamonds));
+
+        let moves = game.generate_moves();
+        assert_eq!(4, moves.len());
+    }
+
+    #[test]
+    fn test_move_gen2() {
+        let mut game = Game::new();
+        game.table.insert(Card::new(Value::Three, Suit::Clubs));
+        game.table.insert(Card::new(Value::Three, Suit::Spades));
+        game.table.insert(Card::new(Value::Four, Suit::Spades));
+        game.table.insert(Card::new(Value::Seven, Suit::Spades));
+
+        game.players[0]
+            .hand
+            .insert(Card::new(Value::King, Suit::Diamonds));
+
+        let moves = game.generate_moves();
+        assert_eq!(3, moves.len());
+    }
 }
