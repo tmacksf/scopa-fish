@@ -3,6 +3,8 @@ use rand::rng;
 use std::cmp::min;
 use std::collections::HashSet;
 use std::fmt;
+use std::io;
+use std::io::prelude::*;
 use std::ops::Add;
 
 // use rustc_hash::FxHashSet;
@@ -45,6 +47,18 @@ impl Suit {
             Suit::Clubs => 0b00000001,
             Suit::Diamonds => 0b00000010,
             Suit::Hearts => 0b00000011,
+        }
+    }
+
+    pub fn decode_bitmask(mut val: u8) -> Self {
+        let mask = 0b00000011;
+        val = val & mask;
+        match val {
+            0b00000000 => Suit::Spades,
+            0b00000001 => Suit::Clubs,
+            0b00000010 => Suit::Diamonds,
+            0b00000011 => Suit::Hearts,
+            _ => panic!("Could not decode other suit: {}", val),
         }
     }
 }
@@ -97,16 +111,34 @@ impl Value {
 
     pub fn bitmask(&self) -> u8 {
         match self {
-            Value::One => 0b00000000,
-            Value::Two => 0b00000100,
-            Value::Three => 0b00001000,
-            Value::Four => 0b00001100,
-            Value::Five => 0b00010000,
-            Value::Six => 0b00010100,
-            Value::Seven => 0b00011000,
-            Value::Jack => 0b00011100,
-            Value::Queen => 0b00100000,
-            Value::King => 0b00100100,
+            Value::One => 0b00000100,
+            Value::Two => 0b00001000,
+            Value::Three => 0b00001100,
+            Value::Four => 0b00010000,
+            Value::Five => 0b00010100,
+            Value::Six => 0b00011000,
+            Value::Seven => 0b00011100,
+            Value::Jack => 0b00100000,
+            Value::Queen => 0b00100100,
+            Value::King => 0b00101100,
+        }
+    }
+
+    pub fn decode_bitmask(mut val: u8) -> Self {
+        let mask = 0b00111100;
+        val = val & mask;
+        match val {
+            0b00000100 => Value::One,
+            0b00001000 => Value::Two,
+            0b00001100 => Value::Three,
+            0b00010000 => Value::Four,
+            0b00010100 => Value::Five,
+            0b00011000 => Value::Six,
+            0b00011100 => Value::Seven,
+            0b00100000 => Value::Jack,
+            0b00100100 => Value::Queen,
+            0b00101100 => Value::King,
+            _ => panic!("Could not decode other value: {}", val),
         }
     }
 }
@@ -139,7 +171,7 @@ pub struct Card {
 }
 
 // Every card can be stored in 6 bits meaning a full 40 card deck needs
-// 6*40 bits -> 240 bits or 3 bytes
+// 6*40 bits -> 240 bits or 24 (will use 32) bytes
 impl Card {
     pub fn new(val: Value, suit: Suit) -> Card {
         Card { val, suit }
@@ -155,8 +187,49 @@ impl Card {
         Ok(Card::new(v, s))
     }
 
-    fn _bitmask(&self) -> u8 {
+    fn bitmask(&self) -> u8 {
         self.val.bitmask() | self.suit.bitmask()
+    }
+
+    fn decode_bitmask(val: u8) -> Card {
+        let v = Value::decode_bitmask(val);
+        let s = Suit::decode_bitmask(val);
+        Card::new(v, s)
+    }
+
+    fn encode_vec(v: &Vec<Card>) -> (u128, u128) {
+        // Encode cds1 first then cds2
+        let mut shift: usize = 0;
+        let mut cds1: u128 = 0;
+        let mut cds2: u128 = 0;
+        for c in v {
+            // 6 * 21 = 126 (once 21 cards have been inserted we have to deal with overflow)
+            if shift < 126 {
+                cds1 |= (c.bitmask() as u128) << shift;
+            } else {
+                let sh = shift % 126;
+                cds2 |= (c.bitmask() as u128) << sh;
+            }
+            shift += 6;
+        }
+        (cds1, cds2)
+    }
+
+    fn decode(mut cds1: u128, mut cds2: u128) -> Vec<Card> {
+        let mut res = vec![];
+        if cds1 == 0 {
+            return res;
+        }
+        let mask: u8 = 0b00111111;
+        while cds1 != 0 {
+            res.push(Card::decode_bitmask((cds1 as u8) & mask));
+            cds1 = cds1 >> 6;
+        }
+        while cds2 != 0 {
+            res.push(Card::decode_bitmask((cds2 as u8) & mask));
+            cds2 = cds2 >> 6;
+        }
+        return res;
     }
 }
 
@@ -166,10 +239,11 @@ impl fmt::Display for Card {
     }
 }
 
+#[derive(Clone)]
 pub struct Player {
     hand: HashSet<Card>,
     pond: Vec<Card>,
-    score: u64,
+    score: u16,
 }
 
 impl Player {
@@ -232,7 +306,7 @@ impl Player {
 
     // Calculate score is only for two and four people
     // TODO(Tommy): adapt a 3 person calculate score
-    pub fn calculate_score(&mut self) {
+    pub fn calculate_score(&mut self) -> u16 {
         // check if the player has card majority
         if self.pond.len() > 20 {
             self.score += 1;
@@ -265,15 +339,17 @@ impl Player {
                 break;
             }
         }
+        return self.score;
     }
 }
 
+#[derive(Clone)]
 pub struct Game {
-    players: Vec<Player>,
+    pub players: Vec<Player>,
     turn: usize, // turn corresponds to the index of a player in the players vec
     table: HashSet<Card>,
     deck: Vec<Card>,
-    moves: Vec<Move>,
+    pub moves: Vec<Move>,
     ace_sweeps: bool,
     last_pickup: usize,
 }
@@ -291,6 +367,12 @@ impl Game {
         };
         g.new_deck();
         return g;
+    }
+
+    pub fn init(&mut self) {
+        self.shuffle();
+        self.init_table();
+        self.deal_users();
     }
 
     fn new_deck(&mut self) {
@@ -325,6 +407,13 @@ impl Game {
         match self.table.insert(card) {
             true => {}
             false => panic!("Could not put card ({}) on table", card),
+        }
+    }
+
+    pub fn last_move(&self) -> Option<Move> {
+        match self.moves.last() {
+            None => None,
+            Some(m) => Some(*m),
         }
     }
 
@@ -363,6 +452,16 @@ impl Game {
         }
     }
 
+    pub fn do_full_move(&mut self, mv: &Move) {
+        self.push_move(mv);
+        self.do_move(mv);
+        self.check_scopa(mv);
+        self.next_turn();
+        // match mv {
+        //     Up(_, _, _) =>
+        // }
+    }
+
     pub fn do_move(&mut self, mv: &Move) {
         // This assumes a move has been checked to be valid.
         // if the move is not valid the program will panic
@@ -372,11 +471,12 @@ impl Game {
                 self.players[p].remove_card(m);
                 self.play_card(*m);
             }
-            Move::Up(m, cards) => {
+            Move::Up(m, cds1, cds2) => {
                 self.last_pickup = self.turn;
                 self.players[p].remove_card(m);
                 self.players[p].give_pond(*m);
 
+                let cards = Card::decode(*cds1, *cds2);
                 for c in cards.iter() {
                     self.take_card(c);
                     self.players[p].give_pond(*c);
@@ -392,7 +492,7 @@ impl Game {
     pub fn check_scopa(&mut self, mv: &Move) {
         match mv {
             Move::Down(_) => {}
-            Move::Up(c, _) => {
+            Move::Up(c, _, _) => {
                 if c.val != Value::One && self.table.len() == 0 {
                     let t = self.turn;
                     self.players[t].score += 1;
@@ -490,37 +590,194 @@ impl Game {
         }
         return over && self.deck.len() == 0;
     }
+
+    pub fn summary(&self) {
+        println!("Player 0: {}", self.players[0].score);
+        println!("Player 1: {}", self.players[1].score);
+
+        for i in 0..self.moves.len() {
+            self.moves[i].print();
+        }
+    }
+
+    // pub fn rollback_to_move(&mut self, mv: Option<&Move>) {
+    //     for i in 0..self.moves.len() {
+    //         match mv {
+    //             Some(m) => {
+    //                 if *m == self.moves[i] {
+    //                     return;
+    //                 }
+    //             }
+    //             None => {}
+    //         }
+    //         match self.moves[i] {
+    //             Move::Down(c) => {
+    //                 self.table.remove(&c);
+    //                 self.players[self.turn].give_card(c);
+    //             }
+    //             Move::Up(c, cds1, cds2) => {}
+    //         }
+    //     }
+    // }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy, PartialEq)]
 pub enum Move {
     Down(Card),
-    Up(Card, Vec<Card>),
+    // Up(Card, Vec<Card>),
+    // TODO(all): Calculate the maximum possible number of pickups (i think its 12 or 13 without ace sweep)
+    // so probably don't need the insane amount of storage and can cut this down further to 12 * 6
+    // (72 bits) or 13 & 6 (78 bits).
+    Up(Card, u128, u128),
 }
 
 impl Move {
     pub fn new_up(c: Card, mut cds: Vec<Card>) -> Move {
         cds.sort_unstable();
-        Move::Up(c, cds)
+        // after the sort we encode the cards
+        let (cds1, cds2) = Card::encode_vec(&cds);
+        Move::Up(c, cds1, cds2)
     }
 
     // moves are sorted when created so need to use the new_up function for this one to work
     pub fn equal(&self, m: &Self) -> bool {
         match (self, m) {
             (Move::Down(c1), Move::Down(c2)) => c1 == c2,
-            (Move::Up(c1, cds1), Move::Up(c2, cds2)) => {
-                if c1 != c2 || cds1.len() != cds2.len() {
-                    return false;
-                }
-                cds1 == cds2
+            (Move::Up(c1, cds11, cds12), Move::Up(c2, cds21, cds22)) => {
+                c1 == c2 && cds11 == cds21 && cds12 == cds22
             }
             (_, _) => false,
+        }
+    }
+
+    pub fn print(&self) {
+        match self {
+            Move::Down(c) => println!("Down: {}", c),
+            Move::Up(c, cds1, cds2) => {
+                let mvs = Card::decode(*cds1, *cds2);
+                print!("Up: {},", c);
+                for i in 0..mvs.len() {
+                    print!(" {}, ", mvs[i]);
+                }
+                println!();
+            }
+        }
+    }
+}
+
+pub struct GameInfo {
+    pub display_debug: bool,
+    pub display_all_debug: bool,
+}
+
+pub fn game_loop(info: GameInfo, p1: fn(&Game) -> Move, p2: fn(&Game) -> Move) {
+    let mut game = Game::new();
+    game.init();
+    if info.display_debug {
+        game.debug_state(info.display_all_debug);
+    }
+    loop {
+        if game.over() {
+            break;
+        }
+        if game.all_hands_empty() {
+            game.deal_users();
+            continue; // to show cards
+        }
+
+        let mv = if game.turn == 0 { p1(&game) } else { p2(&game) };
+
+        let mvs = game.generate_moves();
+        let mut valid_move = false;
+        for i in mvs {
+            if mv.equal(&i) {
+                valid_move = true;
+                break;
+            }
+        }
+        if !valid_move {
+            println!("Invalid move: {:?}", mv);
+            continue;
+        }
+
+        game.push_move(&mv);
+        game.do_move(&mv);
+        game.check_scopa(&mv);
+
+        // after everything is done, switch to the other player's turn and continue
+        game.next_turn();
+    }
+
+    // summarise
+    game.summary();
+}
+
+pub fn get_input(game: &Game) -> Move {
+    'outer: loop {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            let l = line.unwrap();
+            let mut iter = l.split_whitespace();
+            let down = match iter.next() {
+                Some("u") | Some("U") => false,
+                Some("d") | Some("D") => true,
+                _ => {
+                    println!("Needs to start with u/U or d/D");
+                    continue;
+                }
+            };
+
+            // down is just (value, suit); up is a list of (value, suits)
+            if down {
+                let c = match iter.next() {
+                    Some(b) => Card::parse(b),
+                    _ => {
+                        println!("Need a second argument for down");
+                        continue;
+                    }
+                };
+                let card = match c {
+                    Ok(c) => Move::Down(c),
+                    Err(e) => {
+                        println!("Could not parse card: {}", e);
+                        continue;
+                    }
+                };
+                return card;
+            } else {
+                let c = match iter.next() {
+                    Some(b) => match Card::parse(b) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            println!("Could not parse card {}", e);
+                            continue;
+                        }
+                    },
+                    _ => {
+                        println!("Need a first argument for up");
+                        break;
+                    }
+                };
+                let mut v = vec![];
+                for i in iter {
+                    // could have a wildcard for all ?
+                    let card = Card::parse(i);
+                    if card.is_ok() {
+                        v.push(card.unwrap());
+                    } else {
+                        continue 'outer;
+                    }
+                }
+                return Move::new_up(c, v);
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use rand::{self};
+
     use crate::game::{Card, Game, Suit, Value};
 
     #[test]
@@ -559,5 +816,24 @@ mod tests {
 
         let moves = game.generate_moves();
         assert_eq!(3, moves.len());
+    }
+
+    // This is basically a fuzzer
+    #[test]
+    fn encode_decode() {
+        let mut game = Game::new();
+        game.shuffle();
+
+        let l = rand::random::<u8>() % 40;
+        let mut cds = vec![];
+
+        for i in 0..l {
+            cds.push(game.deck[i as usize]);
+        }
+
+        let (v1, v2) = Card::encode_vec(&cds);
+        let cds2 = Card::decode(v1, v2);
+
+        assert_eq!(cds, cds2);
     }
 }
