@@ -7,29 +7,19 @@ use std::io;
 use std::io::prelude::*;
 use std::ops::Add;
 
-// use rustc_hash::FxHashSet;
-// Could move to this because the hashes are tiny
-// could also build our own hashset (just a vector of len 40 (80 bytes for cards))
-// Cargo.toml: rustc-hash = "1.1"
-
 // TODOS:
 // Proper error handling (replace strings in Result with errors) - Tommy
-// Randomness (shuffling) - Theo
-// Checking if moves take the least amount of cards - Alex
-// Scoring - Tommy
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Suit {
-    Spades,
-    Clubs,
-    Diamonds,
-    Hearts,
+    Spades = 1,
+    Clubs = 2,
+    Diamonds = 3,
+    Hearts = 4,
 }
 
 impl Suit {
-    pub fn suits() -> Vec<Suit> {
-        vec![Suit::Spades, Suit::Clubs, Suit::Diamonds, Suit::Hearts]
-    }
+    pub const ALL: [Suit; 4] = [Suit::Diamonds, Suit::Hearts, Suit::Spades, Suit::Clubs];
 
     pub fn from_char(c: char) -> Result<Suit, String> {
         match c {
@@ -61,6 +51,16 @@ impl Suit {
             _ => panic!("Could not decode other suit: {}", val),
         }
     }
+
+    pub fn from_num(val: usize) -> Suit {
+        match val {
+            0 => Suit::Spades,
+            1 => Suit::Clubs,
+            2 => Suit::Diamonds,
+            3 => Suit::Hearts,
+            _ => panic!("Cannot decode num: {}", val),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -78,20 +78,18 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn vals() -> Vec<Value> {
-        vec![
-            Value::One,
-            Value::Two,
-            Value::Three,
-            Value::Four,
-            Value::Five,
-            Value::Six,
-            Value::Seven,
-            Value::Jack,
-            Value::Queen,
-            Value::King,
-        ]
-    }
+    pub const ALL: [Value; 10] = [
+        Value::One,
+        Value::Two,
+        Value::Three,
+        Value::Four,
+        Value::Five,
+        Value::Six,
+        Value::Seven,
+        Value::Jack,
+        Value::Queen,
+        Value::King,
+    ];
 
     pub fn from_char(c: char) -> Result<Value, String> {
         match c {
@@ -141,6 +139,22 @@ impl Value {
             _ => panic!("Could not decode other value: {}", val),
         }
     }
+
+    pub fn from_num(val: usize) -> Value {
+        match val {
+            0 => Value::One,
+            1 => Value::Two,
+            2 => Value::Three,
+            3 => Value::Four,
+            4 => Value::Five,
+            5 => Value::Six,
+            6 => Value::Seven,
+            7 => Value::Jack,
+            8 => Value::Queen,
+            9 => Value::King,
+            _ => panic!("Cannot decode value: {}", val),
+        }
+    }
 }
 
 impl Add for Value {
@@ -164,10 +178,12 @@ impl Add for Value {
     }
 }
 
+pub const NUM_CARDS: usize = 40;
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Card {
-    val: Value,
-    suit: Suit,
+    pub val: Value,
+    pub suit: Suit,
 }
 
 // Every card can be stored in 6 bits meaning a full 40 card deck needs
@@ -231,6 +247,46 @@ impl Card {
         }
         return res;
     }
+
+    pub fn all_cards() -> Vec<Card> {
+        Suit::ALL
+            .iter()
+            .flat_map(|suit| {
+                Value::ALL.iter().map(|val| Card {
+                    suit: *suit,
+                    val: *val,
+                })
+            })
+            .collect()
+    }
+
+    pub fn num(&self) -> usize {
+        (self.suit as usize - 1) * 10 + (self.val as usize - 1)
+    }
+
+    pub fn from_num(c: usize) -> Card {
+        Card {
+            val: Value::from_num(c % 10),
+            suit: Suit::from_num(c / 10),
+        }
+    }
+
+    // TODO(tommy): Make sure this actually works
+    pub fn heuristic(&self) -> f32 {
+        let mut total = match self.val {
+            Value::Seven => 1.0 / 4.0,
+            Value::Six => 1.0 / 8.0,
+            Value::Five => 1.0 / 16.0,
+            _ => 0.0,
+        };
+
+        total += match self.suit {
+            Suit::Diamonds => 1.0 / 10.0,
+            _ => 0.0,
+        };
+
+        total
+    }
 }
 
 impl fmt::Display for Card {
@@ -241,9 +297,9 @@ impl fmt::Display for Card {
 
 #[derive(Clone)]
 pub struct Player {
-    hand: HashSet<Card>,
-    pond: Vec<Card>,
-    score: u16,
+    pub hand: HashSet<Card>,
+    pub pond: Vec<Card>,
+    pub score: u16,
 }
 
 impl Player {
@@ -346,12 +402,12 @@ impl Player {
 #[derive(Clone)]
 pub struct Game {
     pub players: Vec<Player>,
-    turn: usize, // turn corresponds to the index of a player in the players vec
-    table: HashSet<Card>,
+    pub turn: usize, // turn corresponds to the index of a player in the players vec
+    pub table: HashSet<Card>,
     deck: Vec<Card>,
     pub moves: Vec<Move>,
     ace_sweeps: bool,
-    last_pickup: usize,
+    pub last_pickup: usize,
 }
 
 impl Game {
@@ -376,9 +432,8 @@ impl Game {
     }
 
     fn new_deck(&mut self) {
-        let suits = Suit::suits();
-        for v in Value::vals().iter() {
-            for s in &suits {
+        for v in Value::ALL.iter() {
+            for s in &Suit::ALL {
                 self.deck.push(Card::new(*v, *s));
             }
         }
@@ -471,12 +526,12 @@ impl Game {
                 self.players[p].remove_card(m);
                 self.play_card(*m);
             }
-            Move::Up(m, cds1, cds2) => {
+            Move::Up(m, cds1) => {
                 self.last_pickup = self.turn;
                 self.players[p].remove_card(m);
                 self.players[p].give_pond(*m);
 
-                let cards = Card::decode(*cds1, *cds2);
+                let cards = Card::decode(*cds1, 0);
                 for c in cards.iter() {
                     self.take_card(c);
                     self.players[p].give_pond(*c);
@@ -492,7 +547,7 @@ impl Game {
     pub fn check_scopa(&mut self, mv: &Move) {
         match mv {
             Move::Down(_) => {}
-            Move::Up(c, _, _) => {
+            Move::Up(c, _) => {
                 if c.val != Value::One && self.table.len() == 0 {
                     let t = self.turn;
                     self.players[t].score += 1;
@@ -628,7 +683,7 @@ pub enum Move {
     // TODO(all): Calculate the maximum possible number of pickups (i think its 12 or 13 without ace sweep)
     // so probably don't need the insane amount of storage and can cut this down further to 12 * 6
     // (72 bits) or 13 & 6 (78 bits).
-    Up(Card, u128, u128),
+    Up(Card, u128),
 }
 
 impl Move {
@@ -636,16 +691,20 @@ impl Move {
         cds.sort_unstable();
         // after the sort we encode the cards
         let (cds1, cds2) = Card::encode_vec(&cds);
-        Move::Up(c, cds1, cds2)
+        if cds2 > 0 {
+            panic!(
+                "The impossible has happened: Vec {:?}, cds1: {}, cds2: {}",
+                cds, cds1, cds2
+            );
+        }
+        Move::Up(c, cds1)
     }
 
     // moves are sorted when created so need to use the new_up function for this one to work
     pub fn equal(&self, m: &Self) -> bool {
         match (self, m) {
             (Move::Down(c1), Move::Down(c2)) => c1 == c2,
-            (Move::Up(c1, cds11, cds12), Move::Up(c2, cds21, cds22)) => {
-                c1 == c2 && cds11 == cds21 && cds12 == cds22
-            }
+            (Move::Up(c1, cds11), Move::Up(c2, cds21)) => c1 == c2 && cds11 == cds21,
             (_, _) => false,
         }
     }
@@ -653,13 +712,31 @@ impl Move {
     pub fn print(&self) {
         match self {
             Move::Down(c) => println!("Down: {}", c),
-            Move::Up(c, cds1, cds2) => {
-                let mvs = Card::decode(*cds1, *cds2);
+            Move::Up(c, cds1) => {
+                let mvs = Card::decode(*cds1, 0);
                 print!("Up: {},", c);
                 for i in 0..mvs.len() {
                     print!(" {}, ", mvs[i]);
                 }
                 println!();
+            }
+        }
+    }
+
+    pub fn get_down_card(&self) -> Card {
+        match self {
+            Move::Down(c) => *c,
+            Move::Up(c, _) => *c,
+        }
+    }
+
+    pub fn heuristic(&self) -> f32 {
+        match self {
+            Move::Up(c, cs) => {
+                c.heuristic(),
+            }
+            Self::Down(c) => {
+                c.heuristic(),
             }
         }
     }
@@ -670,7 +747,7 @@ pub struct GameInfo {
     pub display_all_debug: bool,
 }
 
-pub fn game_loop(info: GameInfo, p1: fn(&Game) -> Move, p2: fn(&Game) -> Move) {
+pub fn game_loop(info: GameInfo, p1: fn(&Game) -> Move, p2: fn(&Game) -> Move) -> (u16, u16) {
     let mut game = Game::new();
     game.init();
     if info.display_debug {
@@ -708,11 +785,21 @@ pub fn game_loop(info: GameInfo, p1: fn(&Game) -> Move, p2: fn(&Game) -> Move) {
         game.next_turn();
     }
 
+    // don't care about performance here because it's game end
+    for c in game.table.clone().iter() {
+        game.take_card(c);
+        let last_pickup = game.last_pickup;
+        game.players[last_pickup].give_pond(*c);
+    }
+
+    game.calculate_scores();
     // summarise
     game.summary();
+    (game.players[0].score, game.players[1].score)
 }
 
 pub fn get_input(game: &Game) -> Move {
+    game.debug_state(false);
     'outer: loop {
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
@@ -835,5 +922,25 @@ mod tests {
         let cds2 = Card::decode(v1, v2);
 
         assert_eq!(cds, cds2);
+    }
+
+    #[test]
+    fn nums() {
+        let mut deck = vec![];
+        for v in Value::ALL.iter() {
+            for s in &Suit::ALL {
+                deck.push(Card::new(*v, *s));
+            }
+        }
+
+        let mut hm: [u8; 40] = [0; 40];
+        for i in deck.iter() {
+            if hm[i.num()] == 1 {
+                dbg!(i.num());
+                assert!(false);
+            }
+            hm[i.num()] = 1;
+            assert_eq!(Card::from_num(i.num()), *i);
+        }
     }
 }
