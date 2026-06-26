@@ -63,6 +63,18 @@ impl Suit {
     }
 }
 
+impl fmt::Display for Suit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        let out = match self {
+            Self::Spades => "Spades",
+            Self::Clubs => "Clubs",
+            Self::Diamonds => "Diamonds",
+            Self::Hearts => "Hearts",
+        };
+        write!(f, "{}", out)
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Value {
     One = 1,
@@ -178,7 +190,23 @@ impl Add for Value {
     }
 }
 
-pub const NUM_CARDS: usize = 40;
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        let out = match self {
+            Self::One => "Ace",
+            Self::Two => "Two",
+            Self::Three => "Three",
+            Self::Four => "Four",
+            Self::Five => "Five",
+            Self::Six => "Six",
+            Self::Seven => "Seven",
+            Self::Jack => "Jack",
+            Self::Queen => "Queen",
+            Self::King => "King",
+        };
+        write!(f, "{}", out)
+    }
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Card {
@@ -189,6 +217,8 @@ pub struct Card {
 // Every card can be stored in 6 bits meaning a full 40 card deck needs
 // 6*40 bits -> 240 bits or 24 (will use 32) bytes
 impl Card {
+    pub const NUM_CARDS: usize = 40;
+
     pub fn new(val: Value, suit: Suit) -> Card {
         Card { val, suit }
     }
@@ -213,7 +243,7 @@ impl Card {
         Card::new(v, s)
     }
 
-    fn encode_vec(v: &Vec<Card>) -> (u128, u128) {
+    pub fn encode_vec(v: &Vec<Card>) -> (u128, u128) {
         // Encode cds1 first then cds2
         let mut shift: usize = 0;
         let mut cds1: u128 = 0;
@@ -249,7 +279,7 @@ impl Card {
     }
 
     pub fn all_cards() -> Vec<Card> {
-        Suit::ALL
+        let mut vals: Vec<Card> = Suit::ALL
             .iter()
             .flat_map(|suit| {
                 Value::ALL.iter().map(|val| Card {
@@ -257,7 +287,9 @@ impl Card {
                     val: *val,
                 })
             })
-            .collect()
+            .collect();
+        vals.sort_by(|c1, c2| c1.num().cmp(&c2.num()));
+        vals
     }
 
     pub fn num(&self) -> usize {
@@ -271,10 +303,16 @@ impl Card {
         }
     }
 
-    // TODO(tommy): Make sure this actually works
     pub fn heuristic(&self) -> f32 {
         let mut total = match self.val {
-            Value::Seven => 1.0 / 4.0,
+            Value::Seven => {
+                1.0 / 4.0
+                    + (if self.suit == Suit::Diamonds {
+                        1.0
+                    } else {
+                        0.0
+                    })
+            }
             Value::Six => 1.0 / 8.0,
             Value::Five => 1.0 / 16.0,
             _ => 0.0,
@@ -291,7 +329,7 @@ impl Card {
 
 impl fmt::Display for Card {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        write!(f, "({:?}, {:?})", self.val, self.suit)
+        write!(f, "({} of {})", self.val, self.suit)
     }
 }
 
@@ -333,8 +371,8 @@ impl Player {
         self.hand.len() == 0
     }
 
-    pub fn remove_card(&mut self, c: &Card) {
-        match self.hand.remove(c) {
+    pub fn remove_card(&mut self, c: Card) {
+        match self.hand.remove(&c) {
             true => {}
             false => panic!("Card not present in players hand: {}", c),
         };
@@ -343,13 +381,13 @@ impl Player {
     pub fn find_card(&self, v: Option<Value>, s: Option<Suit>) -> usize {
         let mut count = 0;
 
-        for i in 0..self.pond.len() {
+        for c in &self.pond {
             let v_match = match v {
-                Some(v) => self.pond[i].val == v,
+                Some(v) => c.val == v,
                 None => true,
             };
             let s_match = match s {
-                Some(s) => self.pond[i].suit == s,
+                Some(s) => c.suit == s,
                 None => true,
             };
             if v_match && s_match {
@@ -448,8 +486,8 @@ impl Game {
 
     pub fn deal_users(&mut self) {
         for _ in 0..3 {
-            for i in 0..self.players.len() {
-                self.players[i].give_card(self.deck.pop().unwrap());
+            for p in &mut self.players {
+                p.give_card(self.deck.pop().unwrap());
             }
         }
     }
@@ -512,9 +550,6 @@ impl Game {
         self.do_move(mv);
         self.check_scopa(mv);
         self.next_turn();
-        // match mv {
-        //     Up(_, _, _) =>
-        // }
     }
 
     pub fn do_move(&mut self, mv: &Move) {
@@ -522,16 +557,16 @@ impl Game {
         // if the move is not valid the program will panic
         let p = self.turn;
         match mv {
-            Move::Down(m) => {
-                self.players[p].remove_card(m);
-                self.play_card(*m);
+            Move::Down(c) => {
+                self.players[p].remove_card(*c);
+                self.play_card(*c);
             }
-            Move::Up(m, cds1) => {
+            Move::Up(c, cs) => {
                 self.last_pickup = self.turn;
-                self.players[p].remove_card(m);
-                self.players[p].give_pond(*m);
+                self.players[p].remove_card(*c);
+                self.players[p].give_pond(*c);
 
-                let cards = Card::decode(*cds1, 0);
+                let cards = Card::decode(*cs, 0);
                 for c in cards.iter() {
                     self.take_card(c);
                     self.players[p].give_pond(*c);
@@ -557,16 +592,31 @@ impl Game {
     }
 
     pub fn all_hands_empty(&self) -> bool {
-        let mut empty = true;
-        for i in 0..self.players.len() {
-            empty &= self.players[i].hand_empty();
-        }
-        empty
+        self.players.iter().fold(true, |e, p| p.hand_empty() && e)
     }
 
     pub fn calculate_scores(&mut self) {
-        for i in 0..self.players.len() {
-            self.players[i].calculate_score();
+        for p in &mut self.players {
+            p.calculate_score();
+        }
+    }
+
+    // TODO: Adapt this for more players in the future
+    pub fn calculate_win_for_current_player(&mut self) -> i8 {
+        let p_id = self.turn;
+        let other = (self.turn + 1) % 2;
+
+        let mut ps = [0; 2];
+        for (i, p) in self.players.iter_mut().enumerate() {
+            ps[i] = p.calculate_score();
+        }
+
+        if ps[p_id] == ps[other] {
+            0
+        } else if ps[p_id] > ps[other] {
+            1
+        } else {
+            -1
         }
     }
 
@@ -650,8 +700,26 @@ impl Game {
         println!("Player 0: {}", self.players[0].score);
         println!("Player 1: {}", self.players[1].score);
 
-        for i in 0..self.moves.len() {
-            self.moves[i].print();
+        for mv in &self.moves {
+            mv.print();
+        }
+    }
+
+    pub fn end(&mut self) {
+        let mut cards: [Option<Card>; 40] = [None; 40];
+        for (i, c) in self.table.iter().enumerate() {
+            cards[i] = Some(*c);
+        }
+
+        for c in cards {
+            match c {
+                Some(card) => {
+                    self.take_card(&card);
+                    let last_pickup = self.last_pickup;
+                    self.players[last_pickup].give_pond(card);
+                }
+                None => break,
+            }
         }
     }
 
@@ -715,8 +783,8 @@ impl Move {
             Move::Up(c, cds1) => {
                 let mvs = Card::decode(*cds1, 0);
                 print!("Up: {},", c);
-                for i in 0..mvs.len() {
-                    print!(" {}, ", mvs[i]);
+                for mv in &mvs {
+                    print!(" {}, ", mv);
                 }
                 println!();
             }
@@ -733,11 +801,15 @@ impl Move {
     pub fn heuristic(&self) -> f32 {
         match self {
             Move::Up(c, cs) => {
-                c.heuristic(),
+                let mut total = c.heuristic();
+                total += Card::decode(*cs, 0)
+                    .iter()
+                    .map(|c: &Card| c.heuristic())
+                    .sum::<f32>();
+
+                total
             }
-            Self::Down(c) => {
-                c.heuristic(),
-            }
+            Self::Down(c) => c.heuristic(),
         }
     }
 }
@@ -786,11 +858,7 @@ pub fn game_loop(info: GameInfo, p1: fn(&Game) -> Move, p2: fn(&Game) -> Move) -
     }
 
     // don't care about performance here because it's game end
-    for c in game.table.clone().iter() {
-        game.take_card(c);
-        let last_pickup = game.last_pickup;
-        game.players[last_pickup].give_pond(*c);
-    }
+    game.end();
 
     game.calculate_scores();
     // summarise
@@ -941,6 +1009,11 @@ mod tests {
             }
             hm[i.num()] = 1;
             assert_eq!(Card::from_num(i.num()), *i);
+        }
+
+        let cds = Card::all_cards();
+        for (i, c) in cds.iter().enumerate() {
+            assert_eq!(c.num(), i)
         }
     }
 }

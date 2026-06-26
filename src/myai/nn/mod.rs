@@ -22,27 +22,27 @@ const NUM_CARD_SLICES: usize = 4;
 const NUM_ADDITIONAL: usize = 4;
 
 pub fn encode_tensor(g: &Game) -> Vec<f32> {
-    let mut out = vec![0.0; NUM_CARD_SLICES * game::NUM_CARDS + NUM_ADDITIONAL];
+    let mut out = vec![0.0; NUM_CARD_SLICES * game::Card::NUM_CARDS + NUM_ADDITIONAL];
 
     let cds = Card::all_cards();
     let turn = g.turn;
-    for i in 0..cds.len() {
+    for card in cds.iter() {
         // 1: cards on table
-        out[i] = if g.table.contains(&cds[i]) { 1.0 } else { 0.0 };
+        out[card.num()] = if g.table.contains(card) { 1.0 } else { 0.0 };
         // 2: cards in hand
-        out[i + 40] = if g.players[turn].hand.contains(&cds[i]) {
+        out[card.num() + 40] = if g.players[turn].hand.contains(card) {
             1.0
         } else {
             0.0
         };
         // 3: cards that have been picked up
-        out[i + 80] = if g.players[turn].pond.contains(&cds[i]) {
+        out[card.num() + 80] = if g.players[turn].pond.contains(card) {
             1.0
         } else {
             0.0
         };
         // 4: cards that have been picked up by opponent
-        out[i + 120] = if g.players[(turn + 1) % 2].pond.contains(&cds[i]) {
+        out[card.num() + 120] = if g.players[(turn + 1) % 2].pond.contains(card) {
             1.0
         } else {
             0.0
@@ -72,7 +72,7 @@ pub fn encode_tensor(g: &Game) -> Vec<f32> {
 //   etc)
 // -
 
-const INPUT_LAYER: usize = NUM_CARD_SLICES * game::NUM_CARDS + NUM_ADDITIONAL;
+const INPUT_LAYER: usize = NUM_CARD_SLICES * game::Card::NUM_CARDS + NUM_ADDITIONAL;
 const HIDDEN_SIZE_1: usize = 128;
 const HIDDEN_SIZE_2: usize = 256;
 const HIDDEN_SIZE_3: usize = 512;
@@ -156,5 +156,21 @@ impl<B: Backend> Model<B> {
         let policy = p_tensor.into_data().to_vec().expect("Cannot unwrap tensor");
 
         (value, policy)
+    }
+}
+
+pub struct TrainingSample {
+    pub state_tensor: Vec<f32>,
+    pub target_policy: [f32; 40],
+    pub target_value: f32,
+}
+
+impl TrainingSample {
+    pub fn new(state_tensor: Vec<f32>, target_policy: [f32; 40]) -> TrainingSample {
+        TrainingSample {
+            state_tensor,
+            target_policy,
+            target_value: 0.0,
+        }
     }
 }
