@@ -301,19 +301,19 @@ impl<'a> MctsNn<'a> {
                 target_policy[num] = weight;
             }
         }
-        let training_data = nn::TrainingSample::new(tensor, target_policy);
+        let training_sample = nn::TrainingSample::new(tensor, target_policy);
         if weights.len() == 0 {
             self.game.debug_state(true);
             panic!("No move!");
         } else if weights.len() == 1 {
-            return (root.nodes[0].mv.unwrap(), training_data);
+            return (root.nodes[0].mv.unwrap(), training_sample);
         }
 
         let dist = WeightedIndex::new(&weights).unwrap();
         let mut rng = rand::rng();
         let chosen = root.nodes[dist.sample(&mut rng)].mv.unwrap();
 
-        (chosen, training_data)
+        (chosen, training_sample)
     }
 
     // Neural network eval
@@ -514,8 +514,8 @@ pub fn softmax(array: Vec<f32>) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
-    use crate::game::{Card, Move, Suit, Value};
     use crate::mcts::MctsNn;
+    use scopa_fish::game::{Card, Move, Suit, Value};
 
     #[test]
     fn multi_move_heuristic() {
