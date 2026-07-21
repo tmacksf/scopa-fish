@@ -1,9 +1,11 @@
-use crate::nn;
-use burn::{
-    backend::Wgpu,
-    module::Module,
-    // tensor::{self},
+use std::{
+    ops::{Add, Div, Sub},
+    sync::mpsc,
+    thread, time,
 };
+
+use crate::nn;
+// use burn::{module::Module, tensor::backend::AutodiffBackend};
 use f32;
 use rand::distr::weighted::WeightedIndex;
 use rand::prelude::*;
@@ -21,8 +23,6 @@ use scopa_fish::game::{self, Card, Game};
 //
 // Could also pivot to a directed graph
 // - Alphazero style DAG structure
-
-pub type NNBackend = Wgpu<f32, i32>;
 
 // Nodes for a mcts
 #[derive(Debug)]
@@ -255,23 +255,45 @@ impl Node {
 //     }
 // }
 
-pub struct MctsNn<'a> {
+// pub struct MctsNn<'a, B: AutodiffBackend> {
+pub struct MctsNn {
     pub game: Game,
     simulation_count: usize,
-    nn: &'a nn::Model<NNBackend>,
+    // nn: &'a nn::Model<B>,
+    send: mpsc::Sender<nn::EvalRequest>,
+    wait_timings: Vec<time::Duration>,
 }
 
 // SQRT(2)
 // const EXPLORATION_PARAMETER: f32 = 1.41421356237;
 const EXPLORATION_PARAMETER: f32 = 2.5; // (Silver et al., 2017) 
 
-impl<'a> MctsNn<'a> {
-    pub fn new(game: Game, simulation_count: usize, nn: &'a nn::Model<NNBackend>) -> Self {
+// impl<'a, B: AutodiffBackend> MctsNn<'a, B> {
+
+impl MctsNn {
+    // pub fn new(game: Game, simulation_count: usize, nn: &'a nn::Model<B>) -> Self {
+    pub fn new(game: Game, simulation_count: usize, send: mpsc::Sender<nn::EvalRequest>) -> Self {
         Self {
             game,
-            nn,
+            // nn,
             simulation_count,
+            send,
+            wait_timings: vec![],
         }
+    }
+
+    pub fn print_wait_timings(&mut self) {
+        let iter_count = self.wait_timings.len();
+        let mut total_time = time::Duration::new(0, 0);
+        for i in &self.wait_timings {
+            total_time += *i;
+        }
+        println!(
+            "Total iters: {}, Total time waiting: {:?}, Avg: {}",
+            iter_count,
+            total_time,
+            total_time.as_micros().div(iter_count as u128)
+        );
     }
 
     pub fn find_move(&mut self) -> (game::Move, nn::TrainingSample) {
@@ -325,7 +347,16 @@ impl<'a> MctsNn<'a> {
         let game = self.game.clone();
         let mut search_path: Vec<usize> = Vec::with_capacity(32);
 
-        for _ in 0..self.simulation_count {
+        let t0 = time::Instant::now();
+        for i in 0..self.simulation_count {
+            if i > 0 && i % 100 == 0 {
+                let t1 = time::Instant::now().sub(t0);
+                println!(
+                    "Thread: {:?} hit check, ms per node: {}",
+                    thread::current().id(),
+                    (t1.as_millis() as usize / i)
+                );
+            };
             self.game = game.clone();
             search_path.clear();
 
@@ -390,7 +421,7 @@ impl<'a> MctsNn<'a> {
         let (eval, evals) = self.nn_evaluate(&mvs);
 
         if evals.len() != mvs.len() {
-            mvs = Self::multi_pickup_heuristic(&mvs);
+            mvs = multi_pickup_heuristic(&mvs);
         }
 
         let mut eval_lookup = [0.0; Card::NUM_CARDS];
@@ -407,9 +438,25 @@ impl<'a> MctsNn<'a> {
         (eval, nodes)
     }
 
-    fn nn_evaluate(&self, mvs: &[game::Move]) -> (f32, Vec<(f32, Card)>) {
-        let t = nn::encode_tensor(&self.game);
-        let (win, mut logits) = self.nn.infer(t, &self.nn.devices()[0]);
+    #[inline]
+    fn evaluate_using_batcher(&self) -> nn::EvalResponse {
+        let state = nn::encode_tensor(&self.game);
+        let (send, recv) = mpsc::channel();
+        let r = nn::EvalRequest {
+            state: state,
+            res: send,
+        };
+        self.send.send(r).unwrap();
+        recv.recv().unwrap()
+    }
+
+    fn nn_evaluate(&mut self, mvs: &[game::Move]) -> (f32, Vec<(f32, Card)>) {
+        let t0 = time::Instant::now();
+        let res = self.evaluate_using_batcher();
+        let t = time::Instant::now().sub(t0);
+        self.wait_timings.push(t);
+
+        let mut logits = res.policy;
 
         // mask the logits
         // could do this in a different way with the value index
@@ -433,60 +480,60 @@ impl<'a> MctsNn<'a> {
             }
         }
 
-        (win, out)
+        (res.value, out)
+    }
+}
+
+// This function is used to decode the best move if there are multiple possible pickups
+// Limitations of this:
+// - could result in a bad situation for the engine forcing a scopa for the opponent
+// - limits engine's visibility
+//
+// Alternative approach:
+// Prior splitting
+// - keep all valid child nodes but split engine's probability
+// - could do it as a heuristic so a better probability is assigned to seven, etc
+fn multi_pickup_heuristic(mvs: &[game::Move]) -> Vec<game::Move> {
+    // 1. Find the overlapping cards
+    let mut buf: [u8; 40] = [0; 40];
+    for mv in mvs {
+        match mv {
+            game::Move::Down(c) => buf[c.num()] += 1,
+            game::Move::Up(c, _) => buf[c.num()] += 1,
+        }
     }
 
-    // This function is used to decode the best move if there are multiple possible pickups
-    // Limitations of this:
-    // - could result in a bad situation for the engine forcing a scopa for the opponent
-    // - limits engine's visibility
-    //
-    // Alternative approach:
-    // Prior splitting
-    // - keep all valid child nodes but split engine's probability
-    // - could do it as a heuristic so a better probability is assigned to seven, etc
-    fn multi_pickup_heuristic(mvs: &[game::Move]) -> Vec<game::Move> {
-        // 1. Find the overlapping cards
-        let mut buf: [u8; 40] = [0; 40];
-        for mv in mvs {
-            match mv {
-                game::Move::Down(c) => buf[c.num()] += 1,
-                game::Move::Up(c, _) => buf[c.num()] += 1,
+    // 2. score and select the nonoverlapping moves
+    // using a sentinel for tight array packing (Option would be larger)
+    let mut vals: [(f32, usize); 40] = [(0.0, usize::MAX); 40];
+    let mut out = Vec::with_capacity(mvs.len());
+    for (i, mv) in mvs.iter().enumerate() {
+        let num = match mv {
+            game::Move::Down(c) => c.num(),
+            game::Move::Up(c, _) => c.num(),
+        };
+
+        if buf[num] > 1 {
+            let mv_eval = mvs[i].heuristic();
+            let (prev_val, prev_idex) = vals[num];
+
+            if prev_idex == usize::MAX || mv_eval > prev_val {
+                vals[num] = (mvs[i].heuristic(), i);
             }
+        } else {
+            out.push(*mv);
         }
-
-        // 2. score and select the nonoverlapping moves
-        // using a sentinel for tight array packing (Option would be larger)
-        let mut vals: [(f32, usize); 40] = [(0.0, usize::MAX); 40];
-        let mut out = Vec::with_capacity(mvs.len());
-        for (i, mv) in mvs.iter().enumerate() {
-            let num = match mv {
-                game::Move::Down(c) => c.num(),
-                game::Move::Up(c, _) => c.num(),
-            };
-
-            if buf[num] > 1 {
-                let mv_eval = mvs[i].heuristic();
-                let (prev_val, prev_idex) = vals[num];
-
-                if prev_idex == usize::MAX || mv_eval > prev_val {
-                    vals[num] = (mvs[i].heuristic(), i);
-                }
-            } else {
-                out.push(*mv);
-            }
-        }
-
-        // 3. push best overlapping moves
-        for i in 0..vals.len() {
-            let idx = vals[i].1;
-            if idx == usize::MAX {
-                continue;
-            }
-            out.push(mvs[idx]);
-        }
-        out
     }
+
+    // 3. push best overlapping moves
+    for i in 0..vals.len() {
+        let idx = vals[i].1;
+        if idx == usize::MAX {
+            continue;
+        }
+        out.push(mvs[idx]);
+    }
+    out
 }
 
 pub fn softmax(array: Vec<f32>) -> Vec<f32> {
@@ -514,7 +561,7 @@ pub fn softmax(array: Vec<f32>) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
-    use crate::mcts::MctsNn;
+    use crate::mcts;
     use scopa_fish::game::{Card, Move, Suit, Value};
 
     #[test]
@@ -566,7 +613,7 @@ mod tests {
 
         let mvs = vec![m1, m2, m3, m4, m5, m6];
 
-        let mvs2 = MctsNn::multi_pickup_heuristic(&mvs);
+        let mvs2 = mcts::multi_pickup_heuristic(&mvs);
         assert_eq!(3, mvs2.len());
 
         assert!(mvs2.contains(&m1));

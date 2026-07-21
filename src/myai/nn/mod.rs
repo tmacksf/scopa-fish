@@ -11,7 +11,7 @@ use burn::{
 };
 use scopa_fish::game;
 use scopa_fish::game::{Card, Game};
-use std::marker::PhantomData;
+use std::{marker::PhantomData, ops::Sub, sync::mpsc, thread, time};
 
 // The neural network is based on the following:
 // Input:
@@ -29,7 +29,7 @@ const NUM_CARD_SLICES: usize = 4;
 const NUM_ADDITIONAL: usize = 3;
 
 pub fn encode_tensor(g: &Game) -> Vec<f32> {
-    let mut out = vec![0.0; NUM_CARD_SLICES * game::Card::NUM_CARDS + NUM_ADDITIONAL];
+    let mut out = vec![0.0; INPUT_LAYER];
 
     let cds = Card::all_cards();
     let turn = g.turn;
@@ -107,6 +107,57 @@ impl ModelConfig {
             normal: Tanh::new(),
         }
     }
+}
+
+const MAX_BATCH_SIZE: usize = 8;
+
+pub fn run_inference_thread<B: Backend>(
+    model: &'static Model<B>,
+    request_rx: mpsc::Receiver<EvalRequest>,
+) {
+    let t = thread::spawn(move || {
+        loop {
+            let mut batch = Vec::with_capacity(MAX_BATCH_SIZE);
+            if let Ok(req) = request_rx.recv() {
+                batch.push(req);
+
+                // accumulate
+                let now = time::Instant::now();
+                let two_ms = time::Duration::new(0, 20000);
+                while (time::Instant::now().sub(now) < two_ms) || (batch.len() <= MAX_BATCH_SIZE) {
+                    if let Ok(next_req) = request_rx.try_recv() {
+                        batch.push(next_req);
+                    } else {
+                        std::thread::yield_now();
+                    }
+                }
+                let mut squashed = Vec::with_capacity(batch.len() * INPUT_LAYER);
+                for i in &batch {
+                    squashed.extend_from_slice(&i.state);
+                }
+                let t = TensorData::new(squashed, [batch.len(), INPUT_LAYER]);
+                let batched_states = Tensor::<B, 2>::from_data(t, &model.devices()[0]);
+
+                let out = model.forward(batched_states);
+                let p1 = out.policy.into_data();
+                let v1 = out.value.into_data();
+                let p: &[f32] = p1.as_slice().unwrap();
+                let v: &[f32] = v1.as_slice().unwrap();
+
+                for (i, req) in batch.iter().enumerate() {
+                    let start_idx = i * OUTPUT_POLICY;
+                    let end_idx = start_idx + OUTPUT_POLICY;
+                    let res = EvalResponse {
+                        policy: p[start_idx..end_idx].to_vec(),
+                        value: v[i],
+                    };
+                    req.res.send(res).unwrap();
+                }
+            } else {
+                println!("SHUTTING DOWN INFERENCE THREAD");
+            }
+        }
+    });
 }
 
 #[derive(Module, Debug)]
@@ -260,6 +311,7 @@ impl<B: AutodiffBackend> TrainStep for Model<B> {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct TrainingSample {
     pub state_tensor: Vec<f32>,
     pub target_policy: [f32; 40],
@@ -308,4 +360,14 @@ impl<B: Backend> Batcher<B, TrainingSample, Batch<B>> for ScopaBatcher<B> {
             target_values: values,
         }
     }
+}
+
+pub struct EvalRequest {
+    pub state: Vec<f32>,
+    pub res: mpsc::Sender<EvalResponse>,
+}
+
+pub struct EvalResponse {
+    pub value: f32,
+    pub policy: Vec<f32>,
 }

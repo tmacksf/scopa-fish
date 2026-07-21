@@ -443,7 +443,7 @@ pub struct Game {
     pub turn: usize, // turn corresponds to the index of a player in the players vec
     pub table: HashSet<Card>,
     deck: Vec<Card>,
-    pub moves: Vec<Move>,
+    pub actions: Vec<GameAction>,
     ace_sweeps: bool,
     pub last_pickup: usize,
 }
@@ -455,7 +455,7 @@ impl Game {
             deck: Vec::new(),
             table: HashSet::new(),
             turn: 0,
-            moves: Vec::new(),
+            actions: Vec::new(),
             ace_sweeps: true,
             last_pickup: 0,
         };
@@ -487,7 +487,9 @@ impl Game {
     pub fn deal_users(&mut self) {
         for _ in 0..3 {
             for p in &mut self.players {
-                p.give_card(self.deck.pop().unwrap());
+                let c = self.deck.pop().unwrap();
+                self.actions.push(GameAction::Deal(c));
+                p.give_card(c);
             }
         }
     }
@@ -500,13 +502,6 @@ impl Game {
         match self.table.insert(card) {
             true => {}
             false => panic!("Could not put card ({}) on table", card),
-        }
-    }
-
-    pub fn last_move(&self) -> Option<Move> {
-        match self.moves.last() {
-            None => None,
-            Some(m) => Some(*m),
         }
     }
 
@@ -541,7 +536,7 @@ impl Game {
                 .iter()
                 .map(|c| println!("{}", c))
                 .collect::<Vec<()>>();
-            println!("\nMoves: {:?}", self.moves);
+            println!("\nMoves: {:?}", self.actions);
         }
     }
 
@@ -576,7 +571,7 @@ impl Game {
     }
 
     pub fn push_move(&mut self, mv: &Move) {
-        self.moves.push(mv.clone());
+        self.actions.push(GameAction::Move(*mv));
     }
 
     pub fn check_scopa(&mut self, mv: &Move) {
@@ -700,8 +695,8 @@ impl Game {
         println!("Player 0: {}", self.players[0].score);
         println!("Player 1: {}", self.players[1].score);
 
-        for mv in &self.moves {
-            mv.print();
+        for a in &self.actions {
+            a.print();
         }
     }
 
@@ -724,21 +719,34 @@ impl Game {
     }
 
     // pub fn rollback_to_move(&mut self, mv: Option<&Move>) {
-    //     for i in 0..self.moves.len() {
-    //         match mv {
-    //             Some(m) => {
-    //                 if *m == self.moves[i] {
+    //     for a in self.actions.iter().rev() {
+    //         self.turn = self.turn + 1 % 2;
+    //         match (mv, a) {
+    //             (Some(m), GameAction::Move(m1)) => {
+    //                 if m == m1 {
     //                     return;
     //                 }
     //             }
-    //             None => {}
+    //             _ => {}
     //         }
-    //         match self.moves[i] {
-    //             Move::Down(c) => {
-    //                 self.table.remove(&c);
-    //                 self.players[self.turn].give_card(c);
+    //         match a {
+    //             GameAction::Deal(c) => {
+    //                 self.players[self.turn].remove_card(*c);
+    //                 self.deck.push(*c);
     //             }
-    //             Move::Up(c, cds1, cds2) => {}
+    //             GameAction::Move(m) => match m {
+    //                 Move::Down(c) => {
+    //                     self.table.remove(&c);
+    //                     self.players[self.turn].give_card(*c);
+    //                 }
+    //                 Move::Up(c, cs) => {
+    //                     self.players[self.turn].give_card(*c);
+    //                     let c_count = Card::decode(*cs, 0).len();
+    //                     for
+    //                     let cds = self.players[self.turn].pond.split();
+    //                     // pop c_count from their pond and put them onto the table
+    //                 }
+    //             },
     //         }
     //     }
     // }
@@ -810,6 +818,21 @@ impl Move {
                 total
             }
             Self::Down(c) => c.heuristic(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy, PartialEq)]
+pub enum GameAction {
+    Move(Move),
+    Deal(Card),
+}
+
+impl GameAction {
+    fn print(&self) {
+        match self {
+            GameAction::Move(m) => m.print(),
+            _ => {}
         }
     }
 }

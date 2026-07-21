@@ -6,7 +6,12 @@ edition = "2024"
 [dependencies]
 rand = "0.10.1"
 burn = { version = "0.21", features = ["std", "tui", "train", "vision", "wgpu", "fusion"], default-features = false }
+burn-autodiff = "0.21.0"
 
 [[bin]]
 name = "my_ai"
 path = "src/myai/main.rs"
+
+[profile.release]
+debug = 1
+debug-assertions = false

@@ -443,6 +443,7 @@ dependencies = [
  "parking_lot",
  "portable-atomic",
  "spin",
+ "tracing",
 ]
 
 [[package]]
@@ -5098,6 +5099,7 @@ name = "scopa-fish"
 version = "0.1.0"
 dependencies = [
  "burn",
+ "burn-autodiff",
  "rand 0.10.1",
 ]
 
